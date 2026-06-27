@@ -1,0 +1,29 @@
+# Environment
+.env
+.env.local
+*.key
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Database
+*.db
+*.sqlite
+vault.bin
+
+# Personal files
+soul*.txt
+soul*.json
+dream_journal.txt
+heartbeat.txt
+philosophy_state.json
