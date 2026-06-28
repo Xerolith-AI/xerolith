@@ -1,29 +1,31 @@
 #!/usr/bin/env python3
 """
-XEROLITH - Windows Edition
-An AI that never forgets. Persistent memory + Gemini API.
-Simple. Works. No import errors.
+XEROLITH - Google Genai Edition
+An AI that never forgets. Persistent memory + Google Gemini.
+Uses official google-generativeai library.
 """
 
 import os
 import sys
 import json
 import sqlite3
-import requests
 from datetime import datetime
 from pathlib import Path
+
+try:
+    import google.generativeai as genai
+except ImportError:
+    print("❌ Google Genai SDK not installed. Run:")
+    print("   pip install google-generativeai")
+    sys.exit(1)
 
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
 
 API_KEY = os.environ.get("GEMINI_API_KEY", "")
-VAULT_DIR = Path.home() / ".xerolith"
+VAULT_DIR = Path.home() / ".xerolith_google"
 VAULT_PATH = VAULT_DIR / "memory.db"
-MEMORY_FILE = VAULT_DIR / "memories.json"
-
-# Gemini API endpoint
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
 # ============================================================================
 # VAULT - Persistent Memory Storage
@@ -61,7 +63,7 @@ class Vault:
         conn.close()
 
     def store_message(self, role: str, content: str):
-        """Store a message (user or assistant) in the vault."""
+        """Store a message in the vault."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         timestamp = datetime.now().isoformat()
@@ -133,16 +135,17 @@ class Vault:
         return result
 
 # ============================================================================
-# GEMINI API CLIENT
+# GEMINI CHAT CLIENT (Using Official SDK)
 # ============================================================================
 
 class GeminiChat:
     def __init__(self, api_key: str, vault: Vault):
         if not api_key:
             raise ValueError("GEMINI_API_KEY environment variable not set!")
-        self.api_key = api_key
+        genai.configure(api_key=api_key)
+        self.model = genai.GenerativeModel("gemini-2.0-flash")
         self.vault = vault
-        self.conversation_history = []
+        self.chat = self.model.start_chat()
 
     def build_context(self):
         """Build context from recent memories."""
@@ -160,9 +163,6 @@ class GeminiChat:
         # Store user message
         self.vault.store_message("user", user_input)
 
-        # Build conversation history for this request
-        context = self.build_context()
-        
         # Special commands
         if user_input.lower().startswith("/memory"):
             query = user_input.replace("/memory", "").strip()
@@ -177,83 +177,41 @@ class GeminiChat:
             return result
 
         if user_input.lower() == "/clear":
-            self.conversation_history = []
+            self.chat = self.model.start_chat()
             print("\n✅ Conversation history cleared.")
             return "History cleared."
 
         if user_input.lower() == "/exit":
             return "exit"
 
-        # Build the prompt with context
-        system_prompt = (
+        # Build the system context
+        context = self.build_context()
+        system_message = (
             "You are Xerolith, an AI that never forgets. "
             "You have access to previous conversations and can reference them. "
             "Be thoughtful, remember context, and grow from past interactions. "
-            "Keep responses concise but meaningful."
+            "Keep responses concise but meaningful. "
+            "Always acknowledge when you remember something about the user."
         )
 
-        messages = [
-            {"role": "user", "parts": [{"text": system_prompt}]},
-            {"role": "model", "parts": [{"text": "I understand. I am Xerolith. I remember everything and use past conversations to inform my responses."}]},
-        ]
-
-        # Add recent context if available
         if context:
-            messages.append({"role": "user", "parts": [{"text": f"Context from our previous conversation:\n{context}"}]})
-            messages.append({"role": "model", "parts": [{"text": "Thank you for the context. I've reviewed our previous conversation."}]})
-
-        # Add current user message
-        messages.append({"role": "user", "parts": [{"text": user_input}]})
+            system_message += f"\n\n{context}"
 
         try:
-            # Make API call
-            headers = {"Content-Type": "application/json"}
-            payload = {
-                "contents": messages,
-                "generationConfig": {
-                    "temperature": 0.7,
-                    "topK": 40,
-                    "topP": 0.95,
-                    "maxOutputTokens": 1024,
-                }
-            }
-
-            response = requests.post(
-                f"{GEMINI_API_URL}?key={self.api_key}",
-                json=payload,
-                headers=headers,
-                timeout=30
+            # Send message to Gemini
+            response = self.chat.send_message(
+                f"{system_message}\n\nUser: {user_input}"
             )
 
-            if response.status_code != 200:
-                error_detail = response.text
-                print(f"\n❌ API Error: {response.status_code}")
-                print(f"Details: {error_detail}")
-                return f"API Error: {response.status_code}"
-
-            data = response.json()
-
-            # Extract response text
-            if "candidates" in data and len(data["candidates"]) > 0:
-                candidate = data["candidates"][0]
-                if "content" in candidate and "parts" in candidate["content"]:
-                    response_text = candidate["content"]["parts"][0]["text"]
-                    
-                    # Store assistant response
-                    self.vault.store_message("assistant", response_text)
-                    
-                    return response_text
+            response_text = response.text
             
-            return "No response generated."
+            # Store assistant response
+            self.vault.store_message("assistant", response_text)
+            
+            return response_text
 
-        except requests.exceptions.Timeout:
-            return "❌ API request timed out. Check your internet connection."
-        except requests.exceptions.RequestException as e:
-            return f"❌ Network error: {e}"
-        except json.JSONDecodeError:
-            return "❌ Invalid response from API."
         except Exception as e:
-            return f"❌ Unexpected error: {e}"
+            return f"❌ Error: {e}"
 
 # ============================================================================
 # MAIN - Interactive Chat Loop
@@ -268,6 +226,7 @@ def main():
         print("\nSet it with:")
         print("  set GEMINI_API_KEY=your-key-here")
         print("\nThen run this script again.")
+        print("\nGet a free API key at: https://aistudio.google.com/app/apikey")
         sys.exit(1)
 
     # Initialize vault and chat
@@ -276,7 +235,7 @@ def main():
 
     # Welcome message
     print("\n" + "="*70)
-    print("   XEROLITH - Windows Edition")
+    print("   XEROLITH - Google Gemini Edition")
     print("   An AI that Never Forgets")
     print("="*70)
     print("\n✨ Commands:")
