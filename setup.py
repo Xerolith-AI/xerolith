@@ -7,8 +7,11 @@ setup(
     description="Autonomous AI with persistent memory that never forgets",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
-    url="https://github.com/xerolith-ai/xerolith",
-    packages=find_packages(),
+    url="https://github.com/Xerolith-AI/xerolith",
+    packages=find_packages(include=["xerolith", "xerolith.*"]),
+    package_data={
+        "xerolith": ["**/*.py"],
+    },
     classifiers=[
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.9",
